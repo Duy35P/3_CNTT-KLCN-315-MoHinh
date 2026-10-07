@@ -1,0 +1,11 @@
+{
+  "TotalSteps": "Số bước chân",
+  "TotalMinutesAsleep": "Thời gian ngủ",
+  "TotalTimeInBed": "Thời gian trên giường",
+  "heart_rate_mean": "Nhịp tim trung bình",
+  "heart_rate_min": "Nhịp tim thấp nhất",
+  "heart_rate_max": "Nhịp tim cao nhất",
+  "resting_hr_p10": "Nhịp tim nghỉ (ước lượng)",
+  "SpO2_min": "SpO2 thấp nhất (tham khảo)",
+  "activity_index": "Chỉ số hoạt động bất thường (ước lượng)"
+}
