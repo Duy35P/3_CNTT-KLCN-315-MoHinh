@@ -95,7 +95,7 @@ class Predictor:
         return sd if (sd == sd and sd > 1e-8) else 1.0
 
     # ------------------------------------------------------------------ main
-    def predict(self, user_id, daily_history, age=None):
+    def predict(self, user_id, daily_history, age=None, custom_thresholds=None):
         import pandas as pd
         age = age if age is not None else self.cs['assumed_age_default']
         if not daily_history:
@@ -132,7 +132,16 @@ class Predictor:
             why.append(msg)
 
         # ---- Luật cứng (mọi tier, kể cả ngày thiếu dữ liệu)
-        cl = self.clin
+        # ponytail: Nếu có ngưỡng riêng do bác sĩ chỉ định cho hồ sơ, thay thế ngưỡng lâm sàng mặc định
+        cl = dict(self.clin)
+        if custom_thresholds:
+            if 'hr_high' in custom_thresholds and custom_thresholds['hr_high'] is not None:
+                cl['hr_high'] = float(custom_thresholds['hr_high'])
+            if 'hr_low' in custom_thresholds and custom_thresholds['hr_low'] is not None:
+                cl['hr_low'] = float(custom_thresholds['hr_low'])
+            if 'spo2_crit' in custom_thresholds and custom_thresholds['spo2_crit'] is not None:
+                cl['spo2_crit'] = float(custom_thresholds['spo2_crit'])
+
         if today['heart_rate_mean'] > cl['hr_high']:
             up('CRITICAL', f"HR trung bình {today['heart_rate_mean']:.0f} > {cl['hr_high']}")
         if today['resting_hr_p10'] < cl['hr_low']:
@@ -146,14 +155,23 @@ class Predictor:
         out['rule_hits'] = list(why)
 
         z_soft = cs['soft_z']
-        if not valid:
+        if tier == 1:
+            # ponytail: Tầng 1 chỉ cần có nhịp tim là đánh giá được (ưu tiên ngưỡng bác sĩ gán riêng, nếu không dùng chuẩn tuổi)
+            hr_val = today['resting_hr_p10'] if today['resting_hr_p10'] == today['resting_hr_p10'] else today['heart_rate_mean']
+            if custom_thresholds and ('hr_high' in custom_thresholds or 'hr_low' in custom_thresholds):
+                if hr_val > cl['hr_high']:
+                    up('CRITICAL', f"Nhịp tim {hr_val:.0f} vượt ngưỡng tối đa của bác sĩ ({cl['hr_high']:.0f})")
+                elif hr_val < cl['hr_low']:
+                    up('CRITICAL', f"Nhịp tim {hr_val:.0f} dưới ngưỡng tối thiểu của bác sĩ ({cl['hr_low']:.0f})")
+                out['anomaly_score'] = float(hr_val) if hr_val == hr_val else None
+            else:
+                pop = self._pop_baseline(age)
+                z = (hr_val - pop['mean']) / pop['std'] if hr_val == hr_val else 0.0
+                out['anomaly_score'] = float(z)
+                if abs(z) > z_soft:
+                    up('SOFT', f'HR lệch {z:+.1f}σ so với chuẩn tuổi (giả định {age})')
+        elif not valid:
             why.append('Ngày chưa đủ dữ liệu (HR/steps/sleep) -> chưa xét baseline')
-        elif tier == 1:
-            pop = self._pop_baseline(age)
-            z = (today['resting_hr_p10'] - pop['mean']) / pop['std']
-            out['anomaly_score'] = float(z)
-            if abs(z) > z_soft:
-                up('SOFT', f'HR nghỉ lệch {z:+.1f}σ so với chuẩn tuổi (giả định {age})')
         elif tier == 2:
             h = prev_valid['resting_hr_p10'].dropna()
             if len(h) >= cs['min_days_baseline']:
@@ -224,9 +242,9 @@ class Predictor:
 _PREDICTOR = {}
 
 
-def predict_anomaly_week7(user_id, daily_history, age=None, package_dir=PACKAGE_DIR):
+def predict_anomaly_week7(user_id, daily_history, age=None, custom_thresholds=None, package_dir=PACKAGE_DIR):
     """Hàm BE gọi. Xem docstring đầu file và inference_spec_week7.md."""
     p = _PREDICTOR.get(package_dir)
     if p is None:
         p = _PREDICTOR[package_dir] = Predictor(package_dir)
-    return p.predict(user_id, daily_history, age)
+    return p.predict(user_id, daily_history, age, custom_thresholds)

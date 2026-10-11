@@ -24,12 +24,13 @@ class PredictRequest(BaseModel):
     user_id: str
     daily_history: list[dict]  # schema ngày: xem inference_spec_week7.md mục 2
     age: Optional[int] = None
+    custom_thresholds: Optional[dict] = None  # Ngưỡng bác sĩ gán riêng cho hồ sơ (thay thế Tầng 1)
 
 
 @app.post("/predict")
 def predict(req: PredictRequest):
     # ponytail: def (không async) -> FastAPI chạy trong threadpool, không chặn event loop khi torch tính toán
-    return predictor.predict(req.user_id, req.daily_history, req.age)
+    return predictor.predict(req.user_id, req.daily_history, req.age, req.custom_thresholds)
 
 
 @app.get("/health")
