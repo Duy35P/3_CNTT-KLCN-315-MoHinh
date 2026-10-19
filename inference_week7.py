@@ -129,7 +129,8 @@ class Predictor:
             nonlocal level
             if LEVEL[l] > LEVEL[level]:
                 level = l
-            why.append(msg)
+            if msg not in why:
+                why.append(msg)
 
         # ---- Luật cứng (mọi tier, kể cả ngày thiếu dữ liệu)
         # ponytail: Nếu có ngưỡng riêng do bác sĩ chỉ định cho hồ sơ, thay thế ngưỡng lâm sàng mặc định
@@ -143,15 +144,15 @@ class Predictor:
                 cl['spo2_crit'] = float(custom_thresholds['spo2_crit'])
 
         if today['heart_rate_mean'] > cl['hr_high']:
-            up('CRITICAL', f"HR trung bình {today['heart_rate_mean']:.0f} > {cl['hr_high']}")
+            up('CRITICAL', "Nhịp tim cao")
         if today['resting_hr_p10'] < cl['hr_low']:
-            up('CRITICAL', f"HR nghỉ (p10) {today['resting_hr_p10']:.0f} < {cl['hr_low']}")
+            up('CRITICAL', "Nhịp tim thấp")
         sp = today['SpO2_min']
         if sp == sp:
             if sp < cl['spo2_crit']:
-                up('CRITICAL', f"SpO2 min {sp:.0f} < {cl['spo2_crit']} (tham khảo)")
+                up('CRITICAL', "Chỉ số SpO2 thấp")
             elif sp < cl['spo2_warn'] and self.cfg.get('spo2_soft_enabled', False):
-                up('SOFT', f"SpO2 min {sp:.0f} < {cl['spo2_warn']} (tham khảo)")
+                up('SOFT', "Chỉ số SpO2 thấp")
         out['rule_hits'] = list(why)
 
         z_soft = cs['soft_z']
@@ -160,25 +161,29 @@ class Predictor:
             hr_val = today['resting_hr_p10'] if today['resting_hr_p10'] == today['resting_hr_p10'] else today['heart_rate_mean']
             if custom_thresholds and ('hr_high' in custom_thresholds or 'hr_low' in custom_thresholds):
                 if hr_val > cl['hr_high']:
-                    up('CRITICAL', f"Nhịp tim {hr_val:.0f} vượt ngưỡng tối đa của bác sĩ ({cl['hr_high']:.0f})")
+                    up('CRITICAL', "Nhịp tim cao")
                 elif hr_val < cl['hr_low']:
-                    up('CRITICAL', f"Nhịp tim {hr_val:.0f} dưới ngưỡng tối thiểu của bác sĩ ({cl['hr_low']:.0f})")
+                    up('CRITICAL', "Nhịp tim thấp")
                 out['anomaly_score'] = float(hr_val) if hr_val == hr_val else None
             else:
                 pop = self._pop_baseline(age)
                 z = (hr_val - pop['mean']) / pop['std'] if hr_val == hr_val else 0.0
                 out['anomaly_score'] = float(z)
-                if abs(z) > z_soft:
-                    up('SOFT', f'HR lệch {z:+.1f}σ so với chuẩn tuổi (giả định {age})')
+                if z > z_soft:
+                    up('SOFT', "Nhịp tim cao")
+                elif z < -z_soft:
+                    up('SOFT', "Nhịp tim thấp")
         elif not valid:
-            why.append('Ngày chưa đủ dữ liệu (HR/steps/sleep) -> chưa xét baseline')
+            why.append('Ngày chưa đủ dữ liệu -> chưa xét baseline')
         elif tier == 2:
             h = prev_valid['resting_hr_p10'].dropna()
             if len(h) >= cs['min_days_baseline']:
                 z = (today['resting_hr_p10'] - h.mean()) / self._std(h)
                 out['anomaly_score'] = float(z)
-                if abs(z) > z_soft:
-                    up('SOFT', f'HR nghỉ lệch {z:+.1f}σ so với baseline tạm ({len(h)} ngày)')
+                if z > z_soft:
+                    up('SOFT', "Nhịp tim cao")
+                elif z < -z_soft:
+                    up('SOFT', "Nhịp tim thấp")
         else:
             self._tier3(g, today, out, up, why)
 
@@ -234,9 +239,18 @@ class Predictor:
                      'isof_score': iso_score, 'isof_threshold': self.iso_th, 'isof_anomaly': bool(iso_anom),
                      'hybrid_anomaly': hybrid}
         if hybrid:
-            who = ' + '.join(n for n, a in (('LSTM-AE', lstm_anom), ('Isolation Forest', iso_anom)) if a)
-            detail = ', '.join(f"{t['name_vi']} ({t['share']*100:.0f}% sai số, {t['z_today']:+.1f}σ hôm nay)" for t in top)
-            up('SOFT', f'{who} báo bất thường (cửa sổ {W} ngày). Đóng góp chính: {detail}')
+            has_mental = any(t['feature'] in ('steps_total', 'sleep_duration_minutes', 'deep_sleep_minutes') for t in top)
+            has_hr_high = any(t['feature'] in ('heart_rate_mean', 'heart_rate_max') and t['z_today'] > 0 for t in top)
+            has_hr_low = any(t['feature'] in ('heart_rate_mean', 'heart_rate_min') and t['z_today'] < 0 for t in top)
+
+            if has_mental:
+                up('SOFT', "Cảnh báo nguy cơ lo âu")
+            elif has_hr_high:
+                up('SOFT', "Nhịp tim cao kéo dài")
+            elif has_hr_low:
+                up('SOFT', "Nhịp tim thấp kéo dài")
+            else:
+                up('SOFT', "Cảnh báo nguy cơ lo âu")
 
 
 _PREDICTOR = {}
