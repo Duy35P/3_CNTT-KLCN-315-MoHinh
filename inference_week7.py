@@ -185,7 +185,7 @@ class Predictor:
                 elif z < -z_soft:
                     up('SOFT', "Nhịp tim thấp")
         else:
-            self._tier3(g, today, out, up, why)
+            self._tier3(g, today, out, up, why, cl)
 
         out['alert'] = level
         out['reason'] = '; '.join(why) if why else 'Bình thường'
@@ -196,7 +196,7 @@ class Predictor:
         return out
 
     # ------------------------------------------------------------------ tier 3
-    def _tier3(self, g, today, out, up, why):
+    def _tier3(self, g, today, out, up, why, cl=None):
         import pandas as pd
         F, W = self.features, self.W
         vd = g[g['valid_day']]
@@ -239,16 +239,36 @@ class Predictor:
                      'isof_score': iso_score, 'isof_threshold': self.iso_th, 'isof_anomaly': bool(iso_anom),
                      'hybrid_anomaly': hybrid}
         if hybrid:
-            has_mental = any(t['feature'] in ('steps_total', 'sleep_duration_minutes', 'deep_sleep_minutes') for t in top)
+            top_feat = top[0]['feature'] if top else ''
+            top_z = top[0]['z_today'] if top else 0.0
+
+            is_top_hr = top_feat in ('heart_rate_mean', 'heart_rate_min', 'heart_rate_max')
+            is_top_mental = top_feat in ('steps_total', 'sleep_duration_minutes', 'deep_sleep_minutes', 'TotalSteps', 'TotalMinutesAsleep', 'TotalTimeInBed')
+
             has_hr_high = any(t['feature'] in ('heart_rate_mean', 'heart_rate_max') and t['z_today'] > 0 for t in top)
             has_hr_low = any(t['feature'] in ('heart_rate_mean', 'heart_rate_min') and t['z_today'] < 0 for t in top)
+            has_mental = any(t['feature'] in ('steps_total', 'sleep_duration_minutes', 'deep_sleep_minutes', 'TotalSteps', 'TotalMinutesAsleep', 'TotalTimeInBed') for t in top)
 
-            if has_mental:
+            if is_top_hr or has_hr_low or has_hr_high:
+                is_low = (top_z < 0 or has_hr_low)
+                clin_th = cl if cl else self.clin
+                # ponytail: Chi canh bao "keo dai" khi co >= 3 ngay trong cua so 7 ngay bi bat thuong
+                if is_low:
+                    bad_mask = (zw['heart_rate_mean'] < -1.5) | (win['resting_hr_p10'] < clin_th['hr_low'])
+                    n_bad = int(bad_mask.sum())
+                    if n_bad >= 3:
+                        up('SOFT', "Nhịp tim thấp kéo dài")
+                    elif not any("Nhịp tim" in w for w in why):
+                        up('SOFT', "Dị thường nhịp tim")
+                else:
+                    bad_mask = (zw['heart_rate_mean'] > 1.5) | (win['heart_rate_mean'] > clin_th['hr_high'])
+                    n_bad = int(bad_mask.sum())
+                    if n_bad >= 3:
+                        up('SOFT', "Nhịp tim cao kéo dài")
+                    elif not any("Nhịp tim" in w for w in why):
+                        up('SOFT', "Dị thường nhịp tim")
+            elif is_top_mental:
                 up('SOFT', "Cảnh báo nguy cơ lo âu")
-            elif has_hr_high:
-                up('SOFT', "Nhịp tim cao kéo dài")
-            elif has_hr_low:
-                up('SOFT', "Nhịp tim thấp kéo dài")
             else:
                 up('SOFT', "Cảnh báo nguy cơ lo âu")
 
